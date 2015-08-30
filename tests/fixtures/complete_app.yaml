@@ -1,0 +1,4 @@
+application:
+    main:
+        use: egg:tomb_testapps#main
+        foo: "bar"
