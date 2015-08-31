@@ -1,4 +1,6 @@
 import pytest
+import mock
+
 from click.testing import CliRunner
 
 
@@ -18,9 +20,26 @@ def test_db_help():
 def test_db_upgrade():
     from tomb_cli.main import cli
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ['-c', './tests/fixtures/complete_app.yaml', 'db', 'upgrade']
-    )
+    engine = mock.Mock()
+
+    with mock.patch('tomb_migrate.utils.psycopg2') as pg2:
+        pg2.connect.return_value = engine
+        with mock.patch('tomb_migrate.utils.register_default_jsonb'):
+            result = runner.invoke(
+                cli, [
+                    '-c',
+                    './tests/fixtures/complete_app.yaml',
+                    'db',
+                    '-p',
+                    './tests/migrations',
+                    'upgrade'
+                ]
+            )
 
     assert result.exit_code == 0, result.output
-    assert 'upgrading database\n' == result.output
+    expected = '''\
+Running upgrade <Revision: version=1, desc=foo>
+upgrade 00001
+Done upgrading
+'''
+    assert expected == result.output

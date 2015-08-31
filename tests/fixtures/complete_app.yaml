@@ -2,3 +2,10 @@ application:
     main:
         use: egg:tomb_testapps#main
         foo: "bar"
+
+        databases:
+            secondary:
+                type: postgresql
+                host: 127.0.0.1
+                port: 1336
+                database: test

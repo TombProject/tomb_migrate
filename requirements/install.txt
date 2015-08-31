@@ -1,3 +1,5 @@
 click
 montague
+psycopg2
 pyramid
+ujson

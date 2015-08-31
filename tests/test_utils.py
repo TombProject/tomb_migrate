@@ -1,5 +1,6 @@
 import pytest
 import mock
+from mock import call
 
 
 @pytest.mark.unit
@@ -82,3 +83,26 @@ def test_get_upgrade_path_bad_file():
                 ]
                 with pytest.raises(Exception):
                     get_upgrade_path('boom')
+
+
+@pytest.mark.unit
+def test_get_engines_from_settings_psyco():
+    from tomb_migrate.utils import get_engines_from_settings
+    engine = mock.Mock()
+
+    with mock.patch('tomb_migrate.utils.psycopg2') as pg2:
+        pg2.connect.return_value = engine
+
+        with mock.patch('tomb_migrate.utils.register_default_jsonb') as reg:
+            result = get_engines_from_settings({
+                'auth': {
+                    'type': 'postgresql',
+                    'host': '127.0.0.1',
+                    'port': 5432,
+                    'database': 'sontek',
+                }
+            })
+    expected = call(database='sontek', host='127.0.0.1', port=5432)
+    assert pg2.connect.call_args_list[0] == expected
+    assert result == {'auth': engine}
+    assert reg.called
