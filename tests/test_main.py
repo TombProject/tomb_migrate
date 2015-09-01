@@ -40,6 +40,8 @@ def test_db_upgrade():
     expected = '''\
 Running upgrade <Revision: version=1, desc=foo>
 upgrade 00001
+Running upgrade <Revision: version=2, desc=bar>
+upgrade 00002
 Done upgrading
 '''
     assert expected == result.output
