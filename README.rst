@@ -19,13 +19,13 @@ You need to add a ``databases`` section to your ``application`` section:
             type: rethinkdb
             host: 127.0.0.1
             port: 1337
-            db: test
+            database: test
 
         secondary:
             type: postgresql
             host: 127.0.0.1
             port: 1336
-            db: test
+            database: test
 
 Setup tracking tables
 ---------------------
