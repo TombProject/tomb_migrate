@@ -1,6 +1,6 @@
 application:
     main:
-        use: egg:tomb_testapps#main
+        use: egg:tomb_migrate_testapps#main
         foo: "bar"
 
         databases:

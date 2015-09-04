@@ -3,6 +3,7 @@ import os
 
 from tomb_migrate.utils import get_engines_from_settings
 from tomb_migrate.utils import get_upgrade_path
+from tomb_migrate.utils import AlreadyInitializedException
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -35,7 +36,8 @@ def upgrade(ctx):
 
 
 @db.command()
-def downgrade():
+@click.pass_context
+def downgrade(ctx):
     """
     Downgrade the database to revision
     """
@@ -43,8 +45,17 @@ def downgrade():
 
 
 @db.command()
-def init():
+@click.pass_context
+def init(ctx):
     """
     Create initial tracking tables for tomb_migrate
     """
-    click.echo("setting up!")
+    engines = ctx.obj.db_engines
+    for key, engine in engines.items():
+        click.echo('Initializing %s' % engine)
+        try:
+            engine.initialize_marker()
+        except AlreadyInitializedException:
+            click.echo('%s is already initialized' % engine)
+
+    click.echo("done initializing databases")

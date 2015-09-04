@@ -1,14 +1,37 @@
 from os import listdir
-from os.path import isfile, join, basename
+from os.path import isfile, isdir, join, basename
 from importlib.machinery import SourceFileLoader
 from functools import partial
+from datetime import datetime
 
 # TODO: This should be optional dependency
 import psycopg2
 import ujson
+import click
+import sys
+
 from psycopg2.extras import register_default_jsonb
 from psycopg2.extras import Json as pjson
 Json = partial(pjson, dumps=ujson.dumps)
+
+
+def _get_psyco_engine(settings):
+    kwargs = {
+        'host': settings['host'],
+        'database': settings['database'],
+    }
+    optional_keys = [
+        'port', 'username', 'password'
+    ]
+
+    for key in optional_keys:
+        if key in settings:
+            kwargs[key] = settings[key]
+
+    conn = psycopg2.connect(**kwargs)
+    register_default_jsonb(conn, loads=ujson.loads)
+
+    return conn
 
 
 def get_revision_from_name(filename):
@@ -21,6 +44,64 @@ def get_revision_from_name(filename):
         return revision, description
     except:
         raise Exception("%s is not a valid migration file" % filename)
+
+
+class AlreadyInitializedException(Exception):
+    pass
+
+
+class EngineContainer:
+    # TODO: This should be based on entrypoints
+    type_map = {
+        'postgresql': _get_psyco_engine
+    }
+
+    def __init__(self, name, settings):
+        self.name = name
+        self.settings = settings
+        self.type = settings['type']
+        self.host = settings['host']
+
+        if self.type in self.type_map:
+            self.engine = self.type_map[self.type](settings)
+        else:
+            raise Exception("Unknown database type: %s" % settings['type'])
+
+    def _init_psyco(self):
+        create_sql = """CREATE TABLE IF NOT EXISTS tomb_migrate_version(
+            version int NOT NULL,
+            date_updated timestamp)"""
+        insert_sql = """INSERT INTO tomb_migrate_version(version, date_updated)
+        VALUES(%s, %s)"""
+
+        select_sql = "SELECT * FROM tomb_migrate_version"
+
+        with self.engine.cursor() as curs:
+            curs.execute(create_sql)
+            curs.execute(select_sql)
+            result = curs.fetchall()
+
+            if len(result) > 0:
+                raise AlreadyInitializedException()
+
+            curs.execute(insert_sql, (0, datetime.utcnow()))
+            self.engine.commit()
+
+    def initialize_marker(self):
+        # TODO: This should be based on entrypoints
+        type_map = {
+            'postgresql': self._init_psyco
+        }
+
+        if self.type in type_map:
+            type_map[self.type]()
+        else:
+            raise Exception('Unknown database type: %s' % self.type)
+
+    def __unicode__(self):
+        return '%s (%s)' % (self.name, self.host)
+
+    __str__ = __unicode__
 
 
 class Revision:
@@ -52,6 +133,10 @@ def get_files_in_directory(directory):
     Get all file in a directory, exclude any directories. This will sort by
     revision number.
     """
+    if not isdir(directory):
+        click.echo("./db/ does not exist, have you ran `tomb db init?`")
+        sys.exit(1)
+
     files = []
     for f in listdir(directory):
         path = join(directory, f)
@@ -80,25 +165,6 @@ def get_upgrade_path(directory, version=None):
     return revisions_to_run
 
 
-def _get_psyco_engine(settings):
-    kwargs = {
-        'host': settings['host'],
-        'database': settings['database'],
-    }
-    optional_keys = [
-        'port', 'username', 'password'
-    ]
-
-    for key in optional_keys:
-        if key in settings:
-            kwargs[key] = settings[key]
-
-    conn = psycopg2.connect(**kwargs)
-    register_default_jsonb(conn, loads=ujson.loads)
-
-    return conn
-
-
 def get_engines_from_settings(settings):
     """
     This gets database engines for each db in settings.
@@ -116,17 +182,9 @@ def get_engines_from_settings(settings):
             }
          }
     """
-    # TODO: This should be based on entrypoints
-    type_map = {
-        'postgresql': _get_psyco_engine
-    }
     engines = {}
+
     for name, db in settings.items():
-        db_type = db['type']
-        if db_type in type_map:
-            engine = type_map[db_type](db)
-            engines[name] = engine
-        else:
-            raise Exception("Unknown database type: %s" % db['type'])
+        engines[name] = EngineContainer(name, db)
 
     return engines
