@@ -7,12 +7,22 @@ from datetime import datetime
 # TODO: This should be optional dependency
 import psycopg2
 import ujson
-import click
-import sys
 
 from psycopg2.extras import register_default_jsonb
 from psycopg2.extras import Json as pjson
 Json = partial(pjson, dumps=ujson.dumps)
+
+
+class AlreadyInitializedException(Exception):
+    pass
+
+
+class NoMigrationsFoundException(Exception):
+    pass
+
+
+class InvalidMigrationFileName(Exception):
+    pass
 
 
 def _get_psyco_engine(settings):
@@ -43,15 +53,9 @@ def get_revision_from_name(filename):
         description = ' '.join(info.split('_'))
         return revision, description
     except:
-        raise Exception("%s is not a valid migration file" % filename)
-
-
-class AlreadyInitializedException(Exception):
-    pass
-
-
-class NoMigrationsFoundException(Exception):
-    pass
+        raise InvalidMigrationFileName(
+            "%s is not a valid migration file" % filename
+        )
 
 
 class EngineContainer:

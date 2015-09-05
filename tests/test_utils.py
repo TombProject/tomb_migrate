@@ -72,24 +72,27 @@ def test_get_upgrade_path_with_version(list_dir, isdir, isfile, file_loader):
 
 
 @pytest.mark.unit
-def test_get_upgrade_path_bad_file():
+@mock.patch('tomb_migrate.utils.mkdir')
+@mock.patch('tomb_migrate.utils.SourceFileLoader')
+@mock.patch('tomb_migrate.utils.isfile')
+@mock.patch('tomb_migrate.utils.listdir')
+def test_get_upgrade_path_bad_file(list_dir, is_file, file_loader, mkdir):
     from tomb_migrate.utils import get_upgrade_path
+    from tomb_migrate.utils import InvalidMigrationFileName
 
-    with mock.patch('tomb_migrate.utils.listdir') as l:
-        with mock.patch('tomb_migrate.utils.isfile') as i:
-            with mock.patch('tomb_migrate.utils.SourceFileLoader'):
-                i.return_value = True
-                l.return_value = [
-                    '00006_qix.py',
-                    '00001_foo.py',
-                    '00003_baz.py',
-                    '00002_bar.py',
-                    '00004_qux.py',
-                    '00010_peña.py',
-                    'foo.tmp~',
-                ]
-                with pytest.raises(SystemExit):
-                    get_upgrade_path('boom')
+    is_file.return_value = True
+    list_dir.return_value = [
+        '00006_qix.py',
+        '00001_foo.py',
+        '00003_baz.py',
+        '00002_bar.py',
+        '00004_qux.py',
+        '00010_peña.py',
+        'foo.tmp~',
+    ]
+
+    with pytest.raises(InvalidMigrationFileName):
+        get_upgrade_path('boom')
 
 
 @pytest.mark.unit

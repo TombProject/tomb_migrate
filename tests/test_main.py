@@ -21,6 +21,7 @@ def test_db_upgrade():
     from tomb_cli.main import cli
     runner = CliRunner()
     engine = mock.Mock()
+    engine.cursor = mock.MagicMock()
 
     with mock.patch('tomb_migrate.utils.psycopg2') as pg2:
         pg2.connect.return_value = engine
