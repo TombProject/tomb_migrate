@@ -3,7 +3,7 @@ import os
 import sys
 
 from tomb_migrate.utils import get_engines_from_settings
-from tomb_migrate.utils import get_upgrade_path
+from tomb_migrate.utils import get_upgrade_path, get_downgrade_path
 from tomb_migrate.utils import create_new_revision
 
 from tomb_migrate.utils import (
@@ -60,7 +60,24 @@ def downgrade(ctx):
     """
     Downgrade the database to revision
     """
-    click.echo('downgrading database')
+    try:
+        downgrade_path = get_downgrade_path(ctx.obj.db_path)
+    except NoMigrationsFoundException:
+        click.echo(
+            "Did not find any migrations to run in %s" % ctx.obj.db_path
+        )
+        click.echo(
+            "Have you tried running `tomb db revision -m <description>`?"
+        )
+        sys.exit(1)
+
+    for revision in downgrade_path:
+        for name, engine in ctx.obj.db_engines.items():
+            click.echo('Running downgrade %s' % revision)
+            revision.upgrade(engine)
+            engine.update_revision(revision.version - 1)
+
+    click.echo('Done downgrading')
 
 
 @db.command()

@@ -178,12 +178,28 @@ def get_upgrade_path(directory, version=None):
     """
     Loads all the files in the order necessary to upgrade.
 
-    Optionals `revision` argument if you want to start from
+    Optionals `version` argument if you want to start from
     a certain location.
     """
     revisions = get_files_in_directory(directory)
     if version:
         revisions_to_run = [r for r in revisions if r.version >= version]
+    else:
+        revisions_to_run = revisions
+
+    return revisions_to_run
+
+
+def get_downgrade_path(directory, version=None):
+    """
+    Loads all the files in the order necessary to downgrade.
+
+    Optionals `revision` argument if you want to start from
+    a certain location.
+    """
+    revisions = reversed(get_files_in_directory(directory))
+    if version:
+        revisions_to_run = [r for r in revisions if r.version <= version]
     else:
         revisions_to_run = revisions
 
