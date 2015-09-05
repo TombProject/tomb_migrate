@@ -1,9 +1,15 @@
 import click
 import os
+import sys
 
 from tomb_migrate.utils import get_engines_from_settings
 from tomb_migrate.utils import get_upgrade_path
-from tomb_migrate.utils import AlreadyInitializedException
+from tomb_migrate.utils import create_new_revision
+
+from tomb_migrate.utils import (
+    AlreadyInitializedException,
+    NoMigrationsFoundException
+)
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -28,10 +34,23 @@ def upgrade(ctx):
     """
     Upgrade the database to revision
     """
-    upgrade_path = get_upgrade_path(ctx.obj.db_path)
+    try:
+        upgrade_path = get_upgrade_path(ctx.obj.db_path)
+    except NoMigrationsFoundException:
+        click.echo(
+            "Did not find any migrations to run in %s" % ctx.obj.db_path
+        )
+        click.echo(
+            "Have you tried running `tomb db revision -m <description>`?"
+        )
+        sys.exit(1)
+
     for revision in upgrade_path:
-        click.echo('Running upgrade %s' % revision)
-        revision.upgrade(ctx.obj.db_engines)
+        for name, engine in ctx.obj.db_engines.items():
+            click.echo('Running upgrade %s' % revision)
+            revision.upgrade(engine)
+            engine.update_revision(revision.version)
+
     click.echo('Done upgrading')
 
 
@@ -59,3 +78,19 @@ def init(ctx):
             click.echo('%s is already initialized' % engine)
 
     click.echo("done initializing databases")
+
+
+@db.command()
+@click.option(
+    '--message', '-m',
+    help='Short description about the revision',
+    required=True
+)
+@click.pass_context
+def revision(ctx, message):
+    """
+    Generates a new revision file
+    """
+    fname = create_new_revision(ctx.obj.db_path, message)
+
+    click.echo('Created new revision file at %s' % fname)

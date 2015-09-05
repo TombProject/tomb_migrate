@@ -1,4 +1,4 @@
-from os import listdir
+from os import listdir, mkdir
 from os.path import isfile, isdir, join, basename
 from importlib.machinery import SourceFileLoader
 from functools import partial
@@ -50,6 +50,10 @@ class AlreadyInitializedException(Exception):
     pass
 
 
+class NoMigrationsFoundException(Exception):
+    pass
+
+
 class EngineContainer:
     # TODO: This should be based on entrypoints
     type_map = {
@@ -87,6 +91,15 @@ class EngineContainer:
             curs.execute(insert_sql, (0, datetime.utcnow()))
             self.engine.commit()
 
+    def _update_psyco(self, version):
+        update_sql = """UPDATE tomb_migrate_version
+                        SET version=%s,
+                            date_updated=%s"""
+
+        with self.engine.cursor() as curs:
+            curs.execute(update_sql, (version, datetime.utcnow()))
+            self.engine.commit()
+
     def initialize_marker(self):
         # TODO: This should be based on entrypoints
         type_map = {
@@ -97,6 +110,16 @@ class EngineContainer:
             type_map[self.type]()
         else:
             raise Exception('Unknown database type: %s' % self.type)
+
+    def update_revision(self, version):
+        # TODO: This should be based on entrypoints
+        type_map = {
+            'postgresql': self._update_psyco
+        }
+        if self.type in type_map:
+            type_map[self.type](version)
+        else:
+            raise Exception('Unknown database type %s' % self.type)
 
     def __unicode__(self):
         return '%s (%s)' % (self.name, self.host)
@@ -134,8 +157,7 @@ def get_files_in_directory(directory):
     revision number.
     """
     if not isdir(directory):
-        click.echo("./db/ does not exist, have you ran `tomb db init?`")
-        sys.exit(1)
+        mkdir(directory)
 
     files = []
     for f in listdir(directory):
@@ -144,6 +166,9 @@ def get_files_in_directory(directory):
             continue
 
         files.append(Revision(path))
+
+    if not files:
+        raise NoMigrationsFoundException()
 
     revisions = sorted(files, key=lambda r: r.version)
     return revisions
@@ -188,3 +213,31 @@ def get_engines_from_settings(settings):
         engines[name] = EngineContainer(name, db)
 
     return engines
+
+
+def create_new_revision(directory, message):
+    try:
+        current_revisions = get_upgrade_path(directory)
+        current_version = current_revisions[-1].version
+    except NoMigrationsFoundException:
+        current_version = 1
+
+    padded_version = "{0:04d}".format(current_version)
+    tmpl = """\
+import click
+
+def upgrade(engine):
+    click.echo('Run upgrade!')
+
+def downgrade(engine):
+    click.echo('Run downgrade!')
+"""
+    description = message.replace(' ', '_')
+    fname = '%s_%s.py' % (padded_version, description)
+
+    path = join(directory, fname)
+
+    with open(path, "w") as revision_file:
+        revision_file.write(tmpl)
+
+    return path

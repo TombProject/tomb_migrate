@@ -1,0 +1,11 @@
+application:
+    main:
+        use: egg:tomb_migrate_testapps#main
+        foo: "bar"
+
+        databases:
+            secondary:
+                type: postgresql
+                host: 127.0.0.1
+                port: 5432
+                database: test
