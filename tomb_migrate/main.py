@@ -8,7 +8,8 @@ from tomb_migrate.utils import create_new_revision
 
 from tomb_migrate.utils import (
     AlreadyInitializedException,
-    NoMigrationsFoundException
+    NoMigrationsFoundException,
+    NotInitializedException,
 )
 
 
@@ -48,8 +49,16 @@ def upgrade(ctx):
     for revision in upgrade_path:
         for name, engine in ctx.obj.db_engines.items():
             click.echo('Running upgrade %s' % revision)
-            revision.upgrade(engine)
-            engine.update_revision(revision.version)
+            try:
+                revision.upgrade(engine)
+                engine.update_revision(revision.version)
+            except NotInitializedException:
+                msg = (
+                    "Upgraded was not completed!, Looks like %s has not been "
+                    "initialized. Run `tomb init`"
+                ) % name
+                click.echo(click.style(msg, fg='red', bold=True))
+                sys.exit(1)
 
     click.echo('Done upgrading')
 

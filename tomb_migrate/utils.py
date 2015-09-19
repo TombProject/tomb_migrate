@@ -13,6 +13,10 @@ from psycopg2.extras import Json as pjson
 Json = partial(pjson, dumps=ujson.dumps)
 
 
+class NotInitializedException(Exception):
+    pass
+
+
 class AlreadyInitializedException(Exception):
     pass
 
@@ -101,8 +105,13 @@ class EngineContainer:
                             date_updated=%s"""
 
         with self.engine.cursor() as curs:
-            curs.execute(update_sql, (version, datetime.utcnow()))
-            self.engine.commit()
+            try:
+                curs.execute(update_sql, (version, datetime.utcnow()))
+                self.engine.commit()
+            except psycopg2.ProgrammingError as e:
+                if e.pgcode == "42P01":
+                    raise NotInitializedException()
+                raise
 
     def initialize_marker(self):
         # TODO: This should be based on entrypoints
