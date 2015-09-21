@@ -100,6 +100,12 @@ def downgrade(ctx):
 
     for revision in downgrade_path:
         for name, engine in ctx.obj.db_engines.items():
+            current_version = engine.current_version()
+            if current_version <= revision.version:
+                msg = "%s already on %s, skipping" % (engine, revision.version)
+                click.echo(click.style(msg, fg='yellow'))
+                continue
+
             click.echo('Running downgrade %s' % revision)
             revision.upgrade(engine)
             engine.update(revision.version - 1)
