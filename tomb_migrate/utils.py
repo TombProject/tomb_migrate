@@ -3,14 +3,20 @@ from os.path import isfile, isdir, join, basename
 from importlib.machinery import SourceFileLoader
 from functools import partial
 from datetime import datetime
+from abc import ABCMeta, abstractmethod
 
 # TODO: This should be optional dependency
 import psycopg2
-import ujson
+import rapidjson
+import pkg_resources
+import rethinkdb
+import pytz
 
 from psycopg2.extras import register_default_jsonb
 from psycopg2.extras import Json as pjson
-Json = partial(pjson, dumps=ujson.dumps)
+Json = partial(pjson, dumps=rapidjson.dumps)
+UTC = pytz.utc
+MARKER_TABLE_NAME = 'tomb_migrate_version'
 
 
 class NotInitializedException(Exception):
@@ -29,23 +35,14 @@ class InvalidMigrationFileName(Exception):
     pass
 
 
-def _get_psyco_engine(settings):
-    kwargs = {
-        'host': settings['host'],
-        'database': settings['database'],
-    }
-    optional_keys = [
-        'port', 'username', 'password'
-    ]
+class UnknownDatabaseType(Exception):
+    pass
 
-    for key in optional_keys:
-        if key in settings:
-            kwargs[key] = settings[key]
 
-    conn = psycopg2.connect(**kwargs)
-    register_default_jsonb(conn, loads=ujson.loads)
-
-    return conn
+def utc_now():
+    now = datetime.utcnow()
+    tz_now = now.replace(tzinfo=UTC)
+    return tz_now
 
 
 def get_revision_from_name(filename):
@@ -62,11 +59,8 @@ def get_revision_from_name(filename):
         )
 
 
-class EngineContainer:
-    # TODO: This should be based on entrypoints
-    type_map = {
-        'postgresql': _get_psyco_engine
-    }
+class BaseDatabaseContainer:
+    __metaclass__ = ABCMeta
 
     def __init__(self, name, settings):
         self.name = name
@@ -74,70 +68,144 @@ class EngineContainer:
         self.type = settings['type']
         self.host = settings['host']
 
-        if self.type in self.type_map:
-            self.engine = self.type_map[self.type](settings)
-        else:
-            raise Exception("Unknown database type: %s" % settings['type'])
+    @abstractmethod
+    def init(self):
+        raise NotImplementedError()
 
-    def _init_psyco(self):
-        create_sql = """CREATE TABLE IF NOT EXISTS tomb_migrate_version(
-            version int NOT NULL,
-            date_updated timestamp)"""
-        insert_sql = """INSERT INTO tomb_migrate_version(version, date_updated)
-        VALUES(%s, %s)"""
+    @abstractmethod
+    def update(self, version):
+        raise NotImplementedError()
 
-        select_sql = "SELECT * FROM tomb_migrate_version"
-
-        with self.engine.cursor() as curs:
-            curs.execute(create_sql)
-            curs.execute(select_sql)
-            result = curs.fetchall()
-
-            if len(result) > 0:
-                raise AlreadyInitializedException()
-
-            curs.execute(insert_sql, (0, datetime.utcnow()))
-            self.engine.commit()
-
-    def _update_psyco(self, version):
-        update_sql = """UPDATE tomb_migrate_version
-                        SET version=%s,
-                            date_updated=%s"""
-
-        with self.engine.cursor() as curs:
-            try:
-                curs.execute(update_sql, (version, datetime.utcnow()))
-                self.engine.commit()
-            except psycopg2.ProgrammingError as e:
-                if e.pgcode == "42P01":
-                    raise NotInitializedException()
-                raise
-
-    def initialize_marker(self):
-        # TODO: This should be based on entrypoints
-        type_map = {
-            'postgresql': self._init_psyco
-        }
-
-        if self.type in type_map:
-            type_map[self.type]()
-        else:
-            raise Exception('Unknown database type: %s' % self.type)
-
-    def update_revision(self, version):
-        # TODO: This should be based on entrypoints
-        type_map = {
-            'postgresql': self._update_psyco
-        }
-        if self.type in type_map:
-            type_map[self.type](version)
-        else:
-            raise Exception('Unknown database type %s' % self.type)
+    @abstractmethod
+    def current_version(self):
+        raise NotImplementedError()
 
     def __unicode__(self):
         return '%s (%s)' % (self.name, self.host)
 
     __str__ = __unicode__
+
+
+class RethinkDBContainer(BaseDatabaseContainer):
+    def __init__(self, name, settings):
+        super().__init__(name, settings)
+
+        kwargs = {
+            'host': settings['host'],
+            'db': settings['database'],
+        }
+
+        optional_keys = [
+            'port'
+        ]
+
+        for key in optional_keys:
+            if key in settings:
+                kwargs[key] = settings[key]
+
+        self.conn = rethinkdb.connect(**kwargs)
+
+    def init(self):
+        current_version = self.current_version()
+
+        if current_version is not None:
+            raise AlreadyInitializedException()
+
+        rethinkdb.table_create(MARKER_TABLE_NAME).run(self.conn)
+        rethinkdb.table(MARKER_TABLE_NAME).insert({
+            'version': 0,
+            'date_updated': utc_now(),
+        }).run(self.conn)
+
+    def update(self, version):
+        try:
+            row = list(rethinkdb.table(MARKER_TABLE_NAME).run(self.conn))[0]
+            row.update({
+                'version': version,
+                'date_updated': utc_now()
+            })
+            rethinkdb.table(MARKER_TABLE_NAME).update(row).run(self.conn)
+        except rethinkdb.errors.ReqlOpFailedError as e:
+            msg = 'Database `%s` does not exist.' % self.settings['database']
+            if e.message == msg:
+                raise NotInitializedException()
+            raise
+
+    def current_version(self):
+        try:
+            result = list(rethinkdb.table(MARKER_TABLE_NAME).run(self.conn))
+        except rethinkdb.errors.ReqlOpFailedError as e:
+            msg = 'Table `%s.%s` does not exist.' % (
+                self.settings['database'],
+                MARKER_TABLE_NAME
+            )
+            if msg == e.message:
+                return None
+            raise
+
+        return result[0]['version']
+
+
+class PsycoDBContainer(BaseDatabaseContainer):
+    def __init__(self, name, settings):
+        super().__init__(name, settings)
+
+        kwargs = {
+            'host': settings['host'],
+            'database': settings['database'],
+        }
+
+        optional_keys = [
+            'port', 'username', 'password'
+        ]
+
+        for key in optional_keys:
+            if key in settings:
+                kwargs[key] = settings[key]
+
+        conn = psycopg2.connect(**kwargs)
+        register_default_jsonb(conn, loads=rapidjson.loads)
+
+        self.conn = conn
+
+    def current_version(self):
+        select_sql = "SELECT * FROM %s LIMIT 1" % MARKER_TABLE_NAME
+
+        with self.conn.cursor() as curs:
+            curs.execute(select_sql)
+            result = curs.fetchone()
+            return result[0]
+
+    def init(self):
+        create_sql = """CREATE TABLE IF NOT EXISTS %s(
+            version int NOT NULL,
+            date_updated timestamp)""" % MARKER_TABLE_NAME
+        insert_sql = """INSERT INTO {0}(version, date_updated)
+                     VALUES(%s, %s)""".format(MARKER_TABLE_NAME)
+
+        current_version = self.current_version()
+
+        if current_version is not None:
+            raise AlreadyInitializedException()
+
+        with self.conn.cursor() as curs:
+            curs.execute(create_sql)
+            curs.execute(insert_sql, (0, utc_now()))
+            self.conn.commit()
+
+    def update(self, version):
+        update_sql = """UPDATE {0}
+                        SET version=%s,
+                            date_updated=%s""".format(MARKER_TABLE_NAME)
+
+        with self.conn.cursor() as curs:
+            try:
+                curs.execute(update_sql, (version, datetime.utcnow()))
+                self.conn.commit()
+            except psycopg2.ProgrammingError as e:
+                if e.pgcode == "42P01":
+                    raise NotInitializedException()
+                raise
 
 
 class Revision:
@@ -219,7 +287,7 @@ def get_downgrade_path(directory, version=None):
     return revisions_to_run
 
 
-def get_engines_from_settings(settings):
+def get_databases_from_settings(settings):
     """
     This gets database engines for each db in settings.
 
@@ -236,12 +304,24 @@ def get_engines_from_settings(settings):
             }
          }
     """
-    engines = {}
+    providers = {}
+    databases = {}
+
+
+    for ep in pkg_resources.iter_entry_points('tomb_migrate.db_providers'):
+        name = ep.name
+        db_module = ep.load()
+        providers[name] = db_module
 
     for name, db in settings.items():
-        engines[name] = EngineContainer(name, db)
+        provider = providers.get(db['type'])
 
-    return engines
+        if provider is None:
+            raise UnknownDatabaseType(db['type'])
+
+        databases[name] = provider(name, db)
+
+    return databases
 
 
 def create_new_revision(directory, message):

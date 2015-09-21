@@ -2,7 +2,7 @@ import click
 import os
 import sys
 
-from tomb_migrate.utils import get_engines_from_settings
+from tomb_migrate.utils import get_databases_from_settings
 from tomb_migrate.utils import get_upgrade_path, get_downgrade_path
 from tomb_migrate.utils import create_new_revision
 
@@ -10,7 +10,12 @@ from tomb_migrate.utils import (
     AlreadyInitializedException,
     NoMigrationsFoundException,
     NotInitializedException,
+    UnknownDatabaseType,
 )
+
+
+def error_msg(msg):
+    click.echo(click.style(msg, fg='red', bold=True))
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -24,7 +29,13 @@ from tomb_migrate.utils import (
 def db(ctx, path):
     settings = ctx.obj.pyramid_env['registry'].settings
     db_settings = settings['databases']
-    engines = get_engines_from_settings(db_settings)
+    try:
+        engines = get_databases_from_settings(db_settings)
+    except UnknownDatabaseType as e:
+        msg = "Uknown database type: %s" % str(e)
+        error_msg(msg)
+        sys.exit(1)
+
     ctx.obj.db_engines = engines
     ctx.obj.db_path = os.path.abspath(path)
 
@@ -48,16 +59,23 @@ def upgrade(ctx):
 
     for revision in upgrade_path:
         for name, engine in ctx.obj.db_engines.items():
-            click.echo('Running upgrade %s' % revision)
+            current_version = engine.current_version()
+            if current_version >= revision.version:
+                msg = "%s already on %s, skipping" % (engine, revision.version)
+                click.echo(click.style(msg, fg='yellow'))
+                continue
+
+            click.echo('Running upgrade %s on %s' % (revision, engine))
+
             try:
                 revision.upgrade(engine)
-                engine.update_revision(revision.version)
+                engine.update(revision.version)
             except NotInitializedException:
                 msg = (
                     "Upgraded was not completed!, Looks like %s has not been "
                     "initialized. Run `tomb init`"
                 ) % name
-                click.echo(click.style(msg, fg='red', bold=True))
+                error_msg(msg)
                 sys.exit(1)
 
     click.echo('Done upgrading')
@@ -84,7 +102,7 @@ def downgrade(ctx):
         for name, engine in ctx.obj.db_engines.items():
             click.echo('Running downgrade %s' % revision)
             revision.upgrade(engine)
-            engine.update_revision(revision.version - 1)
+            engine.update(revision.version - 1)
 
     click.echo('Done downgrading')
 
@@ -99,7 +117,7 @@ def init(ctx):
     for key, engine in engines.items():
         click.echo('Initializing %s' % engine)
         try:
-            engine.initialize_marker()
+            engine.init()
         except AlreadyInitializedException:
             click.echo('%s is already initialized' % engine)
 

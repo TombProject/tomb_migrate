@@ -53,5 +53,9 @@ setup(
         'tomb.commands': [
             'db = tomb_migrate.main:db'
         ],
+        'tomb_migrate.db_providers': [
+            'postgresql = tomb_migrate.utils:PsycoDBContainer',
+            'rethinkdb = tomb_migrate.utils:RethinkDBContainer',
+        ]
     },
 )

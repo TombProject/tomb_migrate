@@ -2,4 +2,6 @@ click
 montague
 psycopg2
 pyramid
-ujson
+python-rapidjson
+pytz
+rethinkdb

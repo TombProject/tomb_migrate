@@ -9,3 +9,8 @@ application:
                 host: 127.0.0.1
                 port: 5432
                 database: test
+
+            user:
+                type: rethinkdb
+                host: 127.0.0.1
+                database: user
